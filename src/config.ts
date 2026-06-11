@@ -16,6 +16,6 @@ export const config = {
     chatId: requireEnv('TELEGRAM_CHAT_ID'),
   },
   smms: {
-    apiToken: process.env.SMMS_API_TOKEN ?? '',
+    apiToken: requireEnv('SMMS_API_TOKEN'),
   },
 } as const;
