@@ -3,7 +3,12 @@ import type { BlockObjectResponse } from '@notionhq/client';
 import { compressImage } from './compress.ts';
 import { logger } from './logger.ts';
 import { notionClient } from './notion.ts';
-import { generateFileName, getSmmsUrl, isSmmsUrl, smmsUpload } from './smms.ts';
+import {
+  createR2Uploader,
+  extractExtension,
+  isR2Url,
+  type R2ImageUploader,
+} from './r2-uploader.ts';
 
 export interface ImageProcessingStats {
   total: number;
@@ -12,15 +17,19 @@ export interface ImageProcessingStats {
   errors: number;
 }
 
+const UPLOAD_DELAY_MS = 100;
+
 export async function processPageImages(pageId: string): Promise<ImageProcessingStats> {
   const stats: ImageProcessingStats = { total: 0, processed: 0, skipped: 0, errors: 0 };
-  await processBlocks(pageId, stats);
+  const uploader = createR2Uploader();
+  await processBlocks(pageId, stats, uploader);
   return stats;
 }
 
 async function processBlocks(
   blockId: string,
   stats: ImageProcessingStats,
+  uploader: R2ImageUploader,
   startCursor?: string,
 ): Promise<void> {
   const response = await notionClient.blocks.children.list({
@@ -34,24 +43,23 @@ async function processBlocks(
 
     if (block.type === 'image') {
       stats.total++;
-      await processImageBlock(block as BlockObjectResponse, stats);
+      await processImageBlock(block as BlockObjectResponse, stats, uploader);
     }
 
     if (block.has_children) {
-      await processBlocks(block.id, stats);
+      await processBlocks(block.id, stats, uploader);
     }
   }
 
   if (response.has_more && response.next_cursor) {
-    await processBlocks(blockId, stats, response.next_cursor);
+    await processBlocks(blockId, stats, uploader, response.next_cursor);
   }
 }
-
-const SM_MS_API_DELAY_MS = 100;
 
 async function processImageBlock(
   block: BlockObjectResponse,
   stats: ImageProcessingStats,
+  uploader: R2ImageUploader,
 ): Promise<void> {
   if (block.type !== 'image') return;
 
@@ -65,7 +73,7 @@ async function processImageBlock(
       needsUpload = true;
     } else if (imageBlock.type === 'external') {
       imageUrl = imageBlock.external.url;
-      needsUpload = !isSmmsUrl(imageUrl);
+      needsUpload = !isR2Url(imageUrl);
     } else {
       stats.skipped++;
       return;
@@ -82,34 +90,25 @@ async function processImageBlock(
       throw new Error(`下载图片失败：${imageUrl}（HTTP ${downloadResponse.status}）`);
     }
 
-    const rawArrayBuffer = await downloadResponse.arrayBuffer();
-    const rawBuffer = Buffer.from(rawArrayBuffer);
+    const contentType = downloadResponse.headers.get('content-type') || undefined;
+    const rawBuffer = Buffer.from(await downloadResponse.arrayBuffer());
+    const ext = extractExtension(imageUrl);
 
-    const fileName = generateFileName(imageUrl, block.id);
-    const imageBuffer =
-      (await compressImage(rawBuffer, fileName).catch(() => null)) ?? rawBuffer;
+    const imageBuffer = (await compressImage(rawBuffer, ext).catch(() => null)) ?? rawBuffer;
 
-    logger.info({ blockId: block.id, fileName }, '正在上传到 SM.MS...');
-    const uploadResult = await smmsUpload(imageBuffer, fileName);
-    const smmsUrl = getSmmsUrl(uploadResult);
-    if (!smmsUrl) {
-      const message =
-        !uploadResult.success && 'message' in uploadResult
-          ? uploadResult.message
-          : 'unknown error';
-      throw new Error(`SM.MS 上传失败: ${message}`);
-    }
+    logger.info({ blockId: block.id, ext }, '正在上传到 R2...');
+    const uploadResult = await uploader.uploadBuffer(imageBuffer, ext, block.id, contentType);
 
-    logger.info({ blockId: block.id, smmsUrl }, '正在更新 Notion block...');
+    logger.info({ blockId: block.id, url: uploadResult.url }, '正在更新 Notion block...');
     await notionClient.blocks.update({
       block_id: block.id,
-      image: { external: { url: smmsUrl } },
+      image: { external: { url: uploadResult.url } },
     });
 
     stats.processed++;
-    logger.info({ blockId: block.id, smmsUrl }, '图片已上传并更新');
+    logger.info({ blockId: block.id, url: uploadResult.url }, '图片已上传并更新');
 
-    await new Promise((resolve) => setTimeout(resolve, SM_MS_API_DELAY_MS));
+    await new Promise((resolve) => setTimeout(resolve, UPLOAD_DELAY_MS));
   } catch (err) {
     stats.errors++;
     logger.error({ blockId: block.id, err }, '图片处理失败');

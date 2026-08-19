@@ -1,5 +1,5 @@
 import 'dotenv/config';
-import { config } from './config.ts';
+import { isR2Configured } from './config.ts';
 import { formatMessage, validateMessage } from './formatter.ts';
 import { processPageImages } from './image-processor.ts';
 import { logger } from './logger.ts';
@@ -25,7 +25,7 @@ async function release(): Promise<void> {
 
   logger.info({ title: page.title, createdDate: page.createdTime.slice(0, 10) }, '找到待发布页面');
 
-  if (config.smms.apiToken) {
+  if (isR2Configured()) {
     logger.info('正在处理页面图片...');
     const imageStats = await processPageImages(page.id);
     logger.info(
@@ -38,7 +38,7 @@ async function release(): Promise<void> {
       '图片处理完成',
     );
   } else {
-    logger.warn('SM.MS API Token 未配置，跳过图片处理');
+    logger.warn('R2 图床未完整配置，跳过图片处理');
   }
 
   logger.info('正在获取页面内容...');

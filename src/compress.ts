@@ -9,6 +9,11 @@ export async function compressImage(buffer: Buffer, filename: string): Promise<B
   const metadata = await image.metadata();
   const ext = filename.split('.').pop()?.toLowerCase();
 
+  // Apply EXIF orientation (e.g. phone photos taken in portrait) so the correct
+  // orientation is baked into the pixels. Otherwise sharp strips the EXIF tag on
+  // re-encode while leaving the pixels un-rotated, making the image appear sideways.
+  image.rotate();
+
   // Resize only if the image exceeds max dimension
   if (
     metadata.width &&

@@ -254,7 +254,7 @@ export async function markAsPublished(pageId: string): Promise<void> {
       published_time: {
         date: {
           start: getTodayInUTC8(),
-          time_zone: 'Asia/Shanghai'
+          time_zone: 'Asia/Shanghai',
         },
       },
     },
