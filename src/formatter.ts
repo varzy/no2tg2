@@ -2,7 +2,6 @@ import type { Paragraph, RichTextSnippet } from './notion.ts';
 
 const MARKDOWN_V2_ESCAPE_REGEX = /([_*[\]()~`>#+\-=|{}.!\\])/g;
 const LINK_ESCAPE_REGEX = /([)\\])/g;
-const FALLBACK_TITLE_EMOJIS = ['🚀', '✨', '🎯', '🧠', '🌟', '🔥', '💡', '🛰️'] as const;
 
 export function escapeMarkdownV2(text: string): string {
   return text.replace(MARKDOWN_V2_ESCAPE_REGEX, '\\$1');
@@ -17,7 +16,6 @@ export interface MessageMeta {
   withTitle: boolean;
   title: string;
   titleUrl: string | null;
-  icon: string | null;
 }
 
 export function convertSnippet(snippet: RichTextSnippet): string {
@@ -68,11 +66,7 @@ function formatTitleLine(meta: MessageMeta): string {
   if (!meta.withTitle) {
     return '';
   }
-  const randomEmoji =
-    FALLBACK_TITLE_EMOJIS[Math.floor(Math.random() * FALLBACK_TITLE_EMOJIS.length)];
-  const titleEmoji = meta.icon ?? randomEmoji;
-  const titleText = `${titleEmoji} ${meta.title}`;
-  const escapedTitle = `*${escapeMarkdownV2(titleText)}*`;
+  const escapedTitle = `*${escapeMarkdownV2(meta.title)}*`;
   if (!meta.titleUrl) {
     return escapedTitle;
   }

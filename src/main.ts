@@ -58,7 +58,6 @@ async function release(): Promise<void> {
     withTitle: page.withTitle,
     title: page.title,
     titleUrl: page.titleUrl,
-    icon: page.icon,
   });
   validateMessage(message, content.imageUrls.length > 0);
 

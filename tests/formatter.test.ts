@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import { convertSnippet, escapeMarkdownV2, formatMessage, validateMessage } from "../src/formatter.js";
 import type { RichTextSnippet } from "../src/notion.js";
@@ -47,11 +47,10 @@ describe("formatMessage", () => {
         tags: ["标签1", "标签2"],
         withTitle: true,
         title: "这是(标题)",
-        titleUrl: "https://example.com/path?a=1)",
-        icon: "🔥"
+        titleUrl: "https://example.com/path?a=1)"
       })
     ).toBe(
-      "\\#标签1 \\#标签2\n\n[*🔥 这是\\(标题\\)*](https://example.com/path?a=1\\))\n\n*第一段*\n\n第二段"
+      "\\#标签1 \\#标签2\n\n[*这是\\(标题\\)*](https://example.com/path?a=1\\))\n\n*第一段*\n\n第二段"
     );
   });
 
@@ -63,27 +62,9 @@ describe("formatMessage", () => {
         tags: [],
         withTitle: false,
         title: "不会显示",
-        titleUrl: "https://example.com",
-        icon: "🔥"
+        titleUrl: "https://example.com"
       })
     ).toBe("仅正文");
-  });
-
-  it("withTitle 开启且页面无 emoji 时使用预设兜底 emoji", () => {
-    const randomSpy = vi.spyOn(Math, "random").mockReturnValue(0);
-    const paragraphs = [[createSnippet({ plainText: "仅正文" })]];
-
-    expect(
-      formatMessage(paragraphs, {
-        tags: [],
-        withTitle: true,
-        title: "缺省图标标题",
-        titleUrl: null,
-        icon: null
-      })
-    ).toBe("*🚀 缺省图标标题*\n\n仅正文");
-
-    randomSpy.mockRestore();
   });
 });
 

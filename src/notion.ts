@@ -21,7 +21,6 @@ export interface NotionPage {
   tags: string[];
   withTitle: boolean;
   titleUrl: string | null;
-  icon: string | null;
 }
 
 export interface RichTextSnippet {
@@ -96,13 +95,6 @@ function extractTitleUrl(page: PageObjectResponse): string | null {
   }
   const value = titleUrlProperty.url?.trim();
   return value && value.length > 0 ? value : null;
-}
-
-function extractIcon(page: PageObjectResponse): string | null {
-  if (!page.icon || page.icon.type !== 'emoji') {
-    return null;
-  }
-  return page.icon.emoji;
 }
 
 function mapRichTextSnippet(item: RichTextItemResponse): RichTextSnippet {
@@ -187,7 +179,6 @@ export async function queryReadyPage(): Promise<NotionPage | null> {
     tags: extractTags(page),
     withTitle: extractWithTitle(page),
     titleUrl: extractTitleUrl(page),
-    icon: extractIcon(page),
   };
 }
 
