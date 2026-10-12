@@ -54,7 +54,9 @@ async function downloadImageForUpload(
   const filename = `notion-image-${index + 1}.jpg`;
   const originalBuffer = Buffer.from(arrayBuffer);
 
-  const compressedBuffer = await compressImage(originalBuffer, filename);
+  // 压缩失败时回退到原图字节，避免单张图片（如 libvips 无法解码的格式）导致整次发布失败。
+  const compressedBuffer =
+    (await compressImage(originalBuffer, filename).catch(() => null)) ?? originalBuffer;
 
   return {
     source: compressedBuffer,

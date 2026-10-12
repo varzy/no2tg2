@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
+import { compressImage } from "../src/compress.js";
 import { createTelegramProxyAgent, sendToChannel } from "../src/telegram.js";
 import type { TelegramApi } from "../src/telegram.js";
 
@@ -57,6 +58,19 @@ describe("sendToChannel", () => {
     expect(media?.[1]).not.toHaveProperty("caption");
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(media?.every((item) => typeof item === "object" && "media" in item && typeof item.media === "object")).toBe(true);
+  });
+
+  it("压缩失败时回退到原图字节并继续发送", async () => {
+    vi.mocked(compressImage).mockRejectedValueOnce(new Error("heif: Security limit exceeded"));
+    const api = createApiMock();
+    const fetchMock = createFetchMock();
+
+    await sendToChannel("hello", ["https://img/1.jpg"], api, fetchMock);
+
+    expect(api.sendPhoto).toHaveBeenCalledTimes(1);
+    const upload = vi.mocked(api.sendPhoto).mock.calls[0][1] as { source: Buffer };
+    expect(Buffer.isBuffer(upload.source)).toBe(true);
+    expect(Array.from(upload.source)).toEqual([1, 2, 3]);
   });
 
   it("超过 10 张图时报错", async () => {
