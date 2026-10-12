@@ -1,11 +1,52 @@
 import sharp from 'sharp';
 
-import { convertHeicToJpeg, isHeicDecodeError, isHeicExt } from './heic.ts';
+import { heicToJpeg, isHeic } from './heic.ts';
 import { logger } from './logger.ts';
 
 const MAX_DIMENSION = 1920;
 const JPEG_QUALITY = 80;
 const PNG_QUALITY = 80;
+
+/** 输出格式：浏览器（Notion）与 Telegram 都能直接显示的格式。 */
+export type OutputFormat = 'jpeg' | 'png' | 'webp' | 'gif';
+export type InputFormat = OutputFormat | 'heic' | 'unknown';
+
+export interface CompressedImage {
+  buffer: Buffer;
+  format: OutputFormat;
+  /** 与实际字节匹配的扩展名（不含点），用于 R2 key 与上传文件名 */
+  ext: string;
+  contentType: string;
+}
+
+const OUTPUT_INFO: Record<OutputFormat, { ext: string; contentType: string }> = {
+  jpeg: { ext: 'jpg', contentType: 'image/jpeg' },
+  png: { ext: 'png', contentType: 'image/png' },
+  webp: { ext: 'webp', contentType: 'image/webp' },
+  gif: { ext: 'gif', contentType: 'image/gif' },
+};
+
+/** 按文件头魔数识别图片格式。Notion/R2 的 URL 扩展名与 content-type 都不可靠。 */
+export function detectImageFormat(buffer: Buffer): InputFormat {
+  if (buffer.length >= 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) {
+    return 'jpeg';
+  }
+  if (buffer.length >= 8 && buffer.readUInt32BE(0) === 0x89504e47) return 'png';
+  if (buffer.length >= 6 && buffer.toString('latin1', 0, 4) === 'GIF8') return 'gif';
+  if (
+    buffer.length >= 12 &&
+    buffer.toString('latin1', 0, 4) === 'RIFF' &&
+    buffer.toString('latin1', 8, 12) === 'WEBP'
+  ) {
+    return 'webp';
+  }
+  if (isHeic(buffer)) return 'heic';
+  return 'unknown';
+}
+
+function result(buffer: Buffer, format: OutputFormat): CompressedImage {
+  return { buffer, format, ...OUTPUT_INFO[format] };
+}
 
 /**
  * 从 JPEG 字节中剥离 MPF 关联的次级图片（如 iPhone Ultra HDR 的 gain map）。
@@ -73,10 +114,20 @@ export function stripJpegSecondaryImages(buffer: Buffer): Buffer {
   return buffer;
 }
 
-async function compressWithSharp(buffer: Buffer, filename: string): Promise<Buffer> {
-  const image = sharp(stripJpegSecondaryImages(buffer));
+async function compressWithSharp(
+  buffer: Buffer,
+  inputFormat: InputFormat,
+  label: string,
+): Promise<CompressedImage> {
+  // GIF 可能是动图，sharp 处理动图效果不佳，原样保留
+  if (inputFormat === 'gif') return result(buffer, 'gif');
+
+  const source =
+    inputFormat === 'heic'
+      ? await heicToJpeg(buffer, MAX_DIMENSION)
+      : stripJpegSecondaryImages(buffer);
+  const image = sharp(source);
   const metadata = await image.metadata();
-  const ext = filename.split('.').pop()?.toLowerCase();
 
   // Apply EXIF orientation (e.g. phone photos taken in portrait) so the correct
   // orientation is baked into the pixels. Otherwise sharp strips the EXIF tag on
@@ -92,32 +143,34 @@ async function compressWithSharp(buffer: Buffer, filename: string): Promise<Buff
     image.resize(MAX_DIMENSION, MAX_DIMENSION, { fit: 'inside', withoutEnlargement: true });
   }
 
-  let output: Buffer;
-  switch (ext) {
+  // PNG/WebP 保持原格式（截图、透明图），其余（JPEG、HEIC 等）统一输出 JPEG。
+  // sharp 默认会把带 ICC 的输入（如 Display P3）转换到 sRGB 再输出。
+  let output: CompressedImage;
+  switch (inputFormat) {
     case 'png':
-      output = await image.png({ quality: PNG_QUALITY }).toBuffer();
+      output = result(await image.png({ quality: PNG_QUALITY }).toBuffer(), 'png');
       break;
     case 'webp':
-      output = await image.webp({ quality: JPEG_QUALITY }).toBuffer();
-      break;
-    case 'gif':
-      // Don't compress gif, sharp can't handle animated gifs well
-      output = buffer;
+      output = result(await image.webp({ quality: JPEG_QUALITY }).toBuffer(), 'webp');
       break;
     default:
-      output = await image.jpeg({ quality: JPEG_QUALITY, mozjpeg: true }).toBuffer();
+      output = result(
+        await image.jpeg({ quality: JPEG_QUALITY, mozjpeg: true }).toBuffer(),
+        'jpeg',
+      );
   }
 
   // 集中记录压缩结果，覆盖 R2 处理与 Telegram 上传两条路径。format/dims/尺寸是
   // 图片问题的首要诊断信息（如 Ultra HDR gain map、解码失败、尺寸异常等）。
   logger.info(
     {
-      filename,
-      format: metadata.format,
+      label,
+      inputFormat,
+      outputFormat: output.format,
       width: metadata.width,
       height: metadata.height,
       inputSize: buffer.length,
-      outputSize: output.length,
+      outputSize: output.buffer.length,
     },
     '图片压缩完成',
   );
@@ -125,19 +178,22 @@ async function compressWithSharp(buffer: Buffer, filename: string): Promise<Buff
   return output;
 }
 
-export async function compressImage(buffer: Buffer, filename: string): Promise<Buffer> {
+/**
+ * 压缩并规范化图片：缩放到 MAX_DIMENSION 内、应用 EXIF 朝向、HEIC 转 JPEG。
+ *
+ * 失败时仅当原图本身是浏览器/Telegram 可直接显示的格式才回退原图；HEIC 等格式
+ * 原样上传必然被 Telegram 拒绝（IMAGE_PROCESS_FAILED），因此直接抛错。
+ */
+export async function compressImage(buffer: Buffer, label: string): Promise<CompressedImage> {
+  const inputFormat = detectImageFormat(buffer);
   try {
-    return await compressWithSharp(buffer, filename);
+    return await compressWithSharp(buffer, inputFormat, label);
   } catch (err) {
-    // HEIC/HEIF：sharp 预编译 libvips 不含 HEVC 解码器，回退 heif-convert 转 JPEG 后重试。
-    if (isHeicExt(filename) && isHeicDecodeError(err)) {
-      logger.warn(
-        { filename, error: err instanceof Error ? err.message : String(err) },
-        'sharp 无法解码 HEIC，回退 heif-convert 转码',
-      );
-      const jpegBuffer = await convertHeicToJpeg(buffer);
-      return compressWithSharp(jpegBuffer, 'converted.jpg');
+    const error = err instanceof Error ? err.message : String(err);
+    if (inputFormat === 'heic' || inputFormat === 'unknown') {
+      throw new Error(`图片处理失败（${label}，格式 ${inputFormat}）：${error}`, { cause: err });
     }
-    throw err;
+    logger.warn({ label, inputFormat, size: buffer.length, error }, '图片压缩失败，回退原图');
+    return result(buffer, inputFormat);
   }
 }

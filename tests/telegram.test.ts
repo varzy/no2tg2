@@ -5,7 +5,12 @@ import { createTelegramProxyAgent, sendToChannel } from "../src/telegram.js";
 import type { TelegramApi } from "../src/telegram.js";
 
 vi.mock("../src/compress.js", () => ({
-  compressImage: vi.fn(async (buffer: Buffer) => buffer),
+  compressImage: vi.fn(async (buffer: Buffer) => ({
+    buffer,
+    format: "jpeg",
+    ext: "jpg",
+    contentType: "image/jpeg",
+  })),
 }));
 
 function createApiMock(): TelegramApi {
@@ -60,17 +65,27 @@ describe("sendToChannel", () => {
     expect(media?.every((item) => typeof item === "object" && "media" in item && typeof item.media === "object")).toBe(true);
   });
 
-  it("压缩失败时回退到原图字节并继续发送", async () => {
-    vi.mocked(compressImage).mockRejectedValueOnce(new Error("heif: Security limit exceeded"));
+  it("上传文件名使用压缩后的实际扩展名", async () => {
+    vi.mocked(compressImage).mockResolvedValueOnce({
+      buffer: Buffer.from([1]),
+      format: "png",
+      ext: "png",
+      contentType: "image/png",
+    });
     const api = createApiMock();
-    const fetchMock = createFetchMock();
 
-    await sendToChannel("hello", ["https://img/1.jpg"], api, fetchMock);
+    await sendToChannel("hello", ["https://img/1.heic"], api, createFetchMock());
 
-    expect(api.sendPhoto).toHaveBeenCalledTimes(1);
-    const upload = vi.mocked(api.sendPhoto).mock.calls[0][1] as { source: Buffer };
-    expect(Buffer.isBuffer(upload.source)).toBe(true);
-    expect(Array.from(upload.source)).toEqual([1, 2, 3]);
+    const upload = vi.mocked(api.sendPhoto).mock.calls[0][1] as { filename: string };
+    expect(upload.filename).toBe("notion-image-1.png");
+  });
+
+  it("图片无法处理时抛错且不发送", async () => {
+    vi.mocked(compressImage).mockRejectedValueOnce(new Error("图片处理失败"));
+    const api = createApiMock();
+
+    await expect(sendToChannel("hello", ["https://img/1.heic"], api, createFetchMock())).rejects.toThrow("图片处理失败");
+    expect(api.sendPhoto).not.toHaveBeenCalled();
   });
 
   it("超过 10 张图时报错", async () => {

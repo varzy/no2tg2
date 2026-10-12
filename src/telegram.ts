@@ -50,34 +50,18 @@ async function downloadImageForUpload(
     throw new Error(`下载图片失败：${url}（HTTP ${response.status}）`);
   }
 
-  const arrayBuffer = await response.arrayBuffer();
-  const filename = `notion-image-${index + 1}.jpg`;
-  const originalBuffer = Buffer.from(arrayBuffer);
+  const originalBuffer = Buffer.from(await response.arrayBuffer());
 
   logger.info({ index, url, size: originalBuffer.length }, '图片已下载');
 
-  // 压缩失败时回退到原图字节，避免单张图片（如 libvips 无法解码的格式）导致整次发布失败。
-  // 压缩成功的明细由 compressImage 内部统一记录，这里只记回退决策。
-  const compressedBuffer = await compressImage(originalBuffer, filename).catch((err) => {
-    logger.warn(
-      {
-        index,
-        url,
-        originalSize: originalBuffer.length,
-        error: err instanceof Error ? err.message : String(err),
-      },
-      '图片压缩失败，回退原图',
-    );
-    return originalBuffer;
-  });
+  // 压缩与失败回退策略由 compressImage 统一处理；文件名扩展名与实际格式保持一致。
+  const image = await compressImage(originalBuffer, `telegram #${index + 1}`);
+  const filename = `notion-image-${index + 1}.${image.ext}`;
 
-  logger.info(
-    { index, url, uploadSize: compressedBuffer.length, filename },
-    '图片准备上传 Telegram',
-  );
+  logger.info({ index, url, uploadSize: image.buffer.length, filename }, '图片准备上传 Telegram');
 
   return {
-    source: compressedBuffer,
+    source: image.buffer,
     filename,
   } as UploadPhoto;
 }

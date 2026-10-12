@@ -16,10 +16,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install system HEIC decoder
-        # sharp 预编译 libvips 不含 HEVC 解码器，需 heif-convert（libheif-examples）
-        run: sudo apt-get update && sudo apt-get install -y libheif-examples libde265
-
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
         with:

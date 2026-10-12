@@ -18,6 +18,7 @@ export interface ImageProcessingStats {
 }
 
 const UPLOAD_DELAY_MS = 100;
+const HEIC_EXTS = new Set(['heic', 'heif']);
 
 export async function processPageImages(pageId: string): Promise<ImageProcessingStats> {
   const stats: ImageProcessingStats = { total: 0, processed: 0, skipped: 0, errors: 0 };
@@ -73,7 +74,8 @@ async function processImageBlock(
       needsUpload = true;
     } else if (imageBlock.type === 'external') {
       imageUrl = imageBlock.external.url;
-      needsUpload = !isR2Url(imageUrl);
+      // 历史版本曾把未能转码的 HEIC 原样传到 R2，浏览器无法显示，需重新处理
+      needsUpload = !isR2Url(imageUrl) || HEIC_EXTS.has(extractExtension(imageUrl));
     } else {
       stats.skipped++;
       return;
@@ -92,29 +94,19 @@ async function processImageBlock(
 
     const contentType = downloadResponse.headers.get('content-type') || undefined;
     const rawBuffer = Buffer.from(await downloadResponse.arrayBuffer());
-    const ext = extractExtension(imageUrl);
 
-    logger.info(
-      { blockId: block.id, imageUrl, size: rawBuffer.length, contentType, ext },
-      '图片已下载',
+    logger.info({ blockId: block.id, imageUrl, size: rawBuffer.length, contentType }, '图片已下载');
+
+    // 扩展名与 Content-Type 取自压缩后的实际格式（HEIC 会被转成 JPEG）
+    const image = await compressImage(rawBuffer, `block ${block.id}`);
+
+    logger.info({ blockId: block.id, ext: image.ext }, '正在上传到 R2...');
+    const uploadResult = await uploader.uploadBuffer(
+      image.buffer,
+      image.ext,
+      block.id,
+      image.contentType,
     );
-
-    // 压缩失败的明细（格式/尺寸）由 compressImage 统一记录，这里只记回退决策。
-    const imageBuffer = await compressImage(rawBuffer, ext).catch((err) => {
-      logger.warn(
-        {
-          blockId: block.id,
-          ext,
-          originalSize: rawBuffer.length,
-          error: err instanceof Error ? err.message : String(err),
-        },
-        '图片压缩失败，回退原图',
-      );
-      return rawBuffer;
-    });
-
-    logger.info({ blockId: block.id, ext }, '正在上传到 R2...');
-    const uploadResult = await uploader.uploadBuffer(imageBuffer, ext, block.id, contentType);
 
     logger.info({ blockId: block.id, url: uploadResult.url }, '正在更新 Notion block...');
     await notionClient.blocks.update({
