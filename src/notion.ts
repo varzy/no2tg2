@@ -168,6 +168,7 @@ export async function queryReadyPage(): Promise<NotionPage | null> {
 
   const first = result.results[0];
   if (!first || !isFullPage(first as PageObjectResponse)) {
+    logger.info({ resultCount: result.results.length }, '没有 Ready 状态的页面');
     return null;
   }
   const page = first as PageObjectResponse;
@@ -193,6 +194,8 @@ export async function getPageContent(pageId: string): Promise<PageContent> {
       page_size: 100,
       start_cursor: nextCursor,
     });
+
+    logger.info({ blockCount: response.results.length, hasMore: response.has_more }, '获取页面块');
 
     for (const block of response.results) {
       if (!('type' in block)) {
@@ -250,4 +253,5 @@ export async function markAsPublished(pageId: string): Promise<void> {
       },
     },
   });
+  logger.info({ pageId }, '已标记为 Published 并写入 published_time');
 }

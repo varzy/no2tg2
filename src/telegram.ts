@@ -54,26 +54,27 @@ async function downloadImageForUpload(
   const filename = `notion-image-${index + 1}.jpg`;
   const originalBuffer = Buffer.from(arrayBuffer);
 
+  logger.info({ index, url, size: originalBuffer.length }, '图片已下载');
+
   // 压缩失败时回退到原图字节，避免单张图片（如 libvips 无法解码的格式）导致整次发布失败。
-  const compressedBuffer = await compressImage(originalBuffer, filename)
-    .then((buf) => {
-      logger.info(
-        { index, originalSize: originalBuffer.length, compressedSize: buf.length },
-        '图片压缩成功',
-      );
-      return buf;
-    })
-    .catch((err) => {
-      logger.warn(
-        {
-          index,
-          originalSize: originalBuffer.length,
-          error: err instanceof Error ? err.message : String(err),
-        },
-        '图片压缩失败，回退原图',
-      );
-      return originalBuffer;
-    });
+  // 压缩成功的明细由 compressImage 内部统一记录，这里只记回退决策。
+  const compressedBuffer = await compressImage(originalBuffer, filename).catch((err) => {
+    logger.warn(
+      {
+        index,
+        url,
+        originalSize: originalBuffer.length,
+        error: err instanceof Error ? err.message : String(err),
+      },
+      '图片压缩失败，回退原图',
+    );
+    return originalBuffer;
+  });
+
+  logger.info(
+    { index, url, uploadSize: compressedBuffer.length, filename },
+    '图片准备上传 Telegram',
+  );
 
   return {
     source: compressedBuffer,
@@ -88,11 +89,13 @@ export async function sendToChannel(
   fetcher: FetchLike = fetch,
 ): Promise<void> {
   if (imageUrls.length === 0) {
+    logger.info({ messageLength: text.length }, '无图片，使用 sendMessage 发送纯文本');
     await api.sendMessage(config.telegram.chatId, text, { parse_mode: 'MarkdownV2' });
     return;
   }
 
   if (imageUrls.length === 1) {
+    logger.info({ imageCount: 1, messageLength: text.length }, '单图，使用 sendPhoto 发送');
     const upload = await downloadImageForUpload(imageUrls[0], 0, fetcher);
     await api.sendPhoto(config.telegram.chatId, upload, {
       caption: text,
@@ -102,6 +105,10 @@ export async function sendToChannel(
   }
 
   if (imageUrls.length <= 10) {
+    logger.info(
+      { imageCount: imageUrls.length, messageLength: text.length },
+      '多图，使用 sendMediaGroup 发送',
+    );
     const uploads = await Promise.all(
       imageUrls.map((url, index) => downloadImageForUpload(url, index, fetcher)),
     );

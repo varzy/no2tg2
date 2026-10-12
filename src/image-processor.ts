@@ -94,7 +94,24 @@ async function processImageBlock(
     const rawBuffer = Buffer.from(await downloadResponse.arrayBuffer());
     const ext = extractExtension(imageUrl);
 
-    const imageBuffer = (await compressImage(rawBuffer, ext).catch(() => null)) ?? rawBuffer;
+    logger.info(
+      { blockId: block.id, imageUrl, size: rawBuffer.length, contentType, ext },
+      '图片已下载',
+    );
+
+    // 压缩失败的明细（格式/尺寸）由 compressImage 统一记录，这里只记回退决策。
+    const imageBuffer = await compressImage(rawBuffer, ext).catch((err) => {
+      logger.warn(
+        {
+          blockId: block.id,
+          ext,
+          originalSize: rawBuffer.length,
+          error: err instanceof Error ? err.message : String(err),
+        },
+        '图片压缩失败，回退原图',
+      );
+      return rawBuffer;
+    });
 
     logger.info({ blockId: block.id, ext }, '正在上传到 R2...');
     const uploadResult = await uploader.uploadBuffer(imageBuffer, ext, block.id, contentType);

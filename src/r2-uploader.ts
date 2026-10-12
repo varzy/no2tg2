@@ -157,6 +157,7 @@ export class R2ImageUploader {
       }),
     );
 
+    logger.info({ key, size: buffer.length, url: publicUrl }, 'R2 上传完成');
     return { url: publicUrl, fileName: key, size: buffer.length };
   }
 

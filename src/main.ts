@@ -61,7 +61,10 @@ async function release(): Promise<void> {
   });
   validateMessage(message, content.imageUrls.length > 0);
 
-  logger.info('正在发送到 Telegram...');
+  logger.info(
+    { imageCount: content.imageUrls.length, messageLength: message.length },
+    '正在发送到 Telegram...',
+  );
   await sendToChannel(message, content.imageUrls);
   logger.info('发送成功！');
 
@@ -78,6 +81,10 @@ async function release(): Promise<void> {
 
 async function runOnce(): Promise<void> {
   try {
+    logger.info(
+      { r2Configured: isR2Configured(), node: process.version, pid: process.pid },
+      'no2tg2 启动',
+    );
     const activeProxy = applyGlobalProxyForFetch();
     if (activeProxy) {
       logger.info({ proxy: activeProxy }, '已启用全局代理');

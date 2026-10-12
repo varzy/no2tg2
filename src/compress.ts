@@ -1,5 +1,7 @@
 import sharp from 'sharp';
 
+import { logger } from './logger.ts';
+
 const MAX_DIMENSION = 1920;
 const JPEG_QUALITY = 80;
 const PNG_QUALITY = 80;
@@ -89,15 +91,35 @@ export async function compressImage(buffer: Buffer, filename: string): Promise<B
     image.resize(MAX_DIMENSION, MAX_DIMENSION, { fit: 'inside', withoutEnlargement: true });
   }
 
+  let output: Buffer;
   switch (ext) {
     case 'png':
-      return image.png({ quality: PNG_QUALITY }).toBuffer();
+      output = await image.png({ quality: PNG_QUALITY }).toBuffer();
+      break;
     case 'webp':
-      return image.webp({ quality: JPEG_QUALITY }).toBuffer();
+      output = await image.webp({ quality: JPEG_QUALITY }).toBuffer();
+      break;
     case 'gif':
       // Don't compress gif, sharp can't handle animated gifs well
-      return buffer;
+      output = buffer;
+      break;
     default:
-      return image.jpeg({ quality: JPEG_QUALITY, mozjpeg: true }).toBuffer();
+      output = await image.jpeg({ quality: JPEG_QUALITY, mozjpeg: true }).toBuffer();
   }
+
+  // 集中记录压缩结果，覆盖 R2 处理与 Telegram 上传两条路径。format/dims/尺寸是
+  // 图片问题的首要诊断信息（如 Ultra HDR gain map、解码失败、尺寸异常等）。
+  logger.info(
+    {
+      filename,
+      format: metadata.format,
+      width: metadata.width,
+      height: metadata.height,
+      inputSize: buffer.length,
+      outputSize: output.length,
+    },
+    '图片压缩完成',
+  );
+
+  return output;
 }
