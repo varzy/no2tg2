@@ -1,5 +1,6 @@
 import sharp from 'sharp';
 
+import { convertHeicToJpeg, isHeicDecodeError, isHeicExt } from './heic.ts';
 import { logger } from './logger.ts';
 
 const MAX_DIMENSION = 1920;
@@ -72,7 +73,7 @@ export function stripJpegSecondaryImages(buffer: Buffer): Buffer {
   return buffer;
 }
 
-export async function compressImage(buffer: Buffer, filename: string): Promise<Buffer> {
+async function compressWithSharp(buffer: Buffer, filename: string): Promise<Buffer> {
   const image = sharp(stripJpegSecondaryImages(buffer));
   const metadata = await image.metadata();
   const ext = filename.split('.').pop()?.toLowerCase();
@@ -122,4 +123,21 @@ export async function compressImage(buffer: Buffer, filename: string): Promise<B
   );
 
   return output;
+}
+
+export async function compressImage(buffer: Buffer, filename: string): Promise<Buffer> {
+  try {
+    return await compressWithSharp(buffer, filename);
+  } catch (err) {
+    // HEIC/HEIF：sharp 预编译 libvips 不含 HEVC 解码器，回退 heif-convert 转 JPEG 后重试。
+    if (isHeicExt(filename) && isHeicDecodeError(err)) {
+      logger.warn(
+        { filename, error: err instanceof Error ? err.message : String(err) },
+        'sharp 无法解码 HEIC，回退 heif-convert 转码',
+      );
+      const jpegBuffer = await convertHeicToJpeg(buffer);
+      return compressWithSharp(jpegBuffer, 'converted.jpg');
+    }
+    throw err;
+  }
 }
