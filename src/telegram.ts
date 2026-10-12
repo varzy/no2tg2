@@ -55,8 +55,25 @@ async function downloadImageForUpload(
   const originalBuffer = Buffer.from(arrayBuffer);
 
   // 压缩失败时回退到原图字节，避免单张图片（如 libvips 无法解码的格式）导致整次发布失败。
-  const compressedBuffer =
-    (await compressImage(originalBuffer, filename).catch(() => null)) ?? originalBuffer;
+  const compressedBuffer = await compressImage(originalBuffer, filename)
+    .then((buf) => {
+      logger.info(
+        { index, originalSize: originalBuffer.length, compressedSize: buf.length },
+        '图片压缩成功',
+      );
+      return buf;
+    })
+    .catch((err) => {
+      logger.warn(
+        {
+          index,
+          originalSize: originalBuffer.length,
+          error: err instanceof Error ? err.message : String(err),
+        },
+        '图片压缩失败，回退原图',
+      );
+      return originalBuffer;
+    });
 
   return {
     source: compressedBuffer,
